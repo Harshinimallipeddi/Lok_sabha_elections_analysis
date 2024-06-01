@@ -1,1 +1,209 @@
+USE lok_sabha_elections;
+
+-- Seeing if there are any parties with same name and different symbol
+
+SELECT DISTINCT state_abbreviation,year,pc_name, party_symbol
+FROM lok_sabha_elections
+WHERE year = 2019;
+
+
+-- Top 5 constituencies with highest voter turnout ratio in 2014
+SELECT year, pc_name, voter_turnout_ratio
+FROM lok_sabha_elections
+WHERE year = 2014
+ORDER BY voter_turnout_ratio DESC
+LIMIT 5;
+
+-- Bottom 5 constituencies with lowest voter turnout ratio in 2014
+SELECT year, pc_name, voter_turnout_ratio
+FROM lok_sabha_elections
+WHERE year = 2014
+ORDER BY voter_turnout_ratio
+LIMIT 5;
+
+-- Top 5 constituencies with highest voter turnout ratio in 2019
+SELECT year, pc_name, voter_turnout_ratio
+FROM lok_sabha_elections
+WHERE year = 2019
+ORDER BY voter_turnout_ratio DESC
+LIMIT 5;
+
+-- Bottom 5 constituencies with lowest voter turnout ratio in 2019
+SELECT year, pc_name, voter_turnout_ratio
+FROM lok_sabha_elections
+WHERE year = 2019
+ORDER BY voter_turnout_ratio
+LIMIT 5;
+
+-- Which constituencies have elected the same party for two consecutive elections, ranked by % of votes to that winning party in 2019
+SELECT
+    a.pc_name
+FROM
+    lok_sabha_elections a
+JOIN
+    lok_sabha_elections b ON a.pc_name = b.pc_name
+WHERE
+    a.year = 2014
+    AND b.year = 2019
+    AND a.party = b.party
+    AND a.total_votes = (SELECT MAX(total_votes) FROM lok_sabha_elections WHERE year = 2014 AND pc_name = a.pc_name)
+ORDER BY
+    (b.total_votes - a.total_votes) DESC
+LIMIT 10;
+
+-- Constituencies voting for different parties in two elections, ranked by the difference in winner vote percentage:
+SELECT
+    pc_name,
+    ABS((total_votes / total_electors) - (total_votes_2014 / total_electors_2014)) AS vote_percentage_difference
+FROM (
+    SELECT
+        pc_name,
+        MAX(CASE WHEN year = 2019 THEN total_votes END) AS total_votes,
+        MAX(CASE WHEN year = 2014 THEN total_votes END) AS total_votes_2014,
+        MAX(CASE WHEN year = 2019 THEN total_electors END) AS total_electors,
+        MAX(CASE WHEN year = 2014 THEN total_electors END) AS total_electors_2014
+    FROM
+        lok_sabha_elections
+    GROUP BY
+        pc_name
+) AS subquery
+ORDER BY
+    vote_percentage_difference DESC
+LIMIT 10;
+
+-- Top 5 candidates based on margin difference with runners in 2014 and 2019
+WITH top_candidates AS (
+    SELECT
+        pc_name,
+        year,
+        candidate,
+        party,
+        total_votes,
+        ROW_NUMBER() OVER(PARTITION BY pc_name, year ORDER BY total_votes DESC) AS `rank`
+    FROM
+        lok_sabha_elections
+    WHERE
+        year IN (2014, 2019)
+)
+SELECT
+    pc_name,
+    year,
+    candidate,
+    party,
+    total_votes,
+    ABS(total_votes - LAG(total_votes) OVER(PARTITION BY pc_name ORDER BY year)) AS margin_difference
+FROM
+    top_candidates
+WHERE
+    `rank` = 1
+ORDER BY
+    margin_difference DESC
+LIMIT 5;
+
+--  % Split of votes of parties between 2014 vs 2019 at national level
+SELECT year,
+       party,
+       SUM(total_votes) AS total_votes,
+       ROUND(SUM(total_votes) * 100.0 / SUM(SUM(total_votes)) OVER(PARTITION BY year), 2) AS vote_percentage
+FROM lok_sabha_elections
+GROUP BY year, party
+ORDER BY year, total_votes DESC;
+
+--  % Split of votes of parties between 2014 vs 2019 at state level
+SELECT 
+    year,
+    state,
+    party,
+    SUM(total_votes) AS total_votes,
+    ROUND(SUM(total_votes) * 100.0 / (SELECT SUM(total_votes) FROM lok_sabha_elections WHERE year = 2014 AND state = t.state), 2) AS vote_percentage
+FROM 
+    lok_sabha_elections t
+GROUP BY 
+    year, state, party
+ORDER BY 
+    year, state, total_votes DESC;
+
+
+-- List top 5 constituencies for two major national parties where they have gained vote share in 2019 as compared to 2014
+WITH party_votes AS (
+    SELECT pc_name,
+           party,
+           year,
+           SUM(total_votes) AS total_votes
+    FROM lok_sabha_elections
+    WHERE party IN ('BJP', 'INC') 
+    GROUP BY pc_name, party, year
+)
+SELECT pc_name,
+       party,
+       SUM(CASE WHEN year = 2019 THEN total_votes ELSE 0 END) - SUM(CASE WHEN year = 2014 THEN total_votes ELSE 0 END) AS vote_difference
+FROM party_votes
+GROUP BY pc_name, party
+ORDER BY vote_difference DESC
+LIMIT 5;
+
+-- Which constituency has voted the most for NOTA?
+SELECT pc_name,
+       SUM(total_votes) AS nota_votes
+FROM lok_sabha_elections
+WHERE party = 'NOTA'
+GROUP BY pc_name
+ORDER BY nota_votes DESC
+LIMIT 1;
+
+-- Which constituencies have elected candidates whose party has less than 10% vote share at state level in 2019
+SELECT pc_name,
+       party
+FROM lok_sabha_elections
+WHERE year = 2019
+GROUP BY pc_name, party
+HAVING SUM(total_votes) < (SELECT 0.1 * SUM(total_votes) FROM lok_sabha_elections WHERE year = 2019 AND state = 'Andhra Pradesh');
+
+-- Is there a correlation between postal votes % and voter turnout %?
+SELECT 
+    year,
+    AVG(postal_votes) / AVG(total_votes) AS postal_votes_percentage,
+    AVG(total_votes) / AVG(total_electors) AS voter_turnout_percentage
+FROM 
+    lok_sabha_elections
+GROUP BY 
+    year;
+
+
+-- Provide 3 recommendations on what the election commission/government can do to increase the voter turnout %.
+-- 1. Increase Awareness:
+SELECT 
+    year,
+    COUNT(DISTINCT state) AS number_of_states,
+    AVG(total_votes) / AVG(total_electors) AS average_voter_turnout
+FROM 
+    lok_sabha_elections
+GROUP BY 
+    year;
+
+
+-- 2. Enhance Accessibility:
+SELECT 
+    year,
+    COUNT(DISTINCT pc_name) AS number_of_constituencies,
+    AVG(total_votes) / AVG(total_electors) AS average_voter_turnout
+FROM 
+    lok_sabha_elections
+GROUP BY 
+    year;
+    
+
+-- 3. Implement Online Voting:
+SELECT 
+    year,
+    SUM(total_votes) AS total_votes
+FROM 
+    lok_sabha_elections
+GROUP BY 
+    year;
+    
+    
+
+
+
 
